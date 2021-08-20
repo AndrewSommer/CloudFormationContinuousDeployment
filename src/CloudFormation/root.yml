@@ -1,0 +1,26 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys infrastructure for CloudFormationContinuousDeployment tool
+Parameters:
+  BranchesToTrack:
+    Description: Comma-separated list of branches to trach which trigger deployments. If left empty, all branches will be tracked
+    Type: String
+    Default: ''
+  PathToRootTemplate:
+    Description: Path of the CloudFormation file in the repository to deploy. This should include the name of the file, as well as the extension (example src/CloudFormation/root.yml)
+    Type: String
+    Default: ''
+Resources:
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Body:
+        info:
+          version: '1.0'
+          title: 'CloudFormationContinuousDeployment'
+        schemes:
+          - 'https'
+        paths:
+          /webhook:
+            post:
+              consumes:
+                - application/json
