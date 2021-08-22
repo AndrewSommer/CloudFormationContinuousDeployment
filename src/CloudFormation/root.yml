@@ -19,7 +19,9 @@ Resources:
   ApiGatewayRestApi:
     Type: 'AWS::ApiGateway::RestApi'
     Properties:
+      Name: !Sub CloudFormationContinuousDeployment-${AWS::Region}-${AWS::StackName}
       Body:
+        swagger: '2.0'
         info:
           version: '1.0'
           title: 'CloudFormationContinuousDeployment'
@@ -32,20 +34,26 @@ Resources:
                 - 'application/json'
               produces:
                 - 'application/json'
+              responses:
+                '200':
+                  description: '200 response'
+                  schema:
+                    $ref: '#/definitions/Empty'
               x-amazon-apigateway-integration:
                 type: 'AWS_PROXY'
                 connectionType: 'INTERNET'
-                credentials: TODO
+                contentHandling: 'CONVERT_TO_TEXT'
+                credentials: !GetAtt 'WebhookRecieverApiRole.Arn'
                 responses:
                   default:
                     statusCode: '200'
                 httpMethod: 'POST'
-                uri: !Join
-                  - ''
-                  - - !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/'
-                    - !GetAtt 'WebhookReciever.Arn'
-                    - '/invocations'
+                uri: !Sub  'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebhookRecieverLambda.Arn}/invocations'
                 passthroughBehavior: when_no_templates
+        definitions:
+          Empty:
+            type: 'object'
+            title: 'Empty Schema'
 
   ApiGateWayDeployment:
     Type: AWS::ApiGateway::Deployment
@@ -60,10 +68,10 @@ Resources:
       RestApiId: !Ref 'ApiGatewayRestApi'
       StageName: Prod
 
-  WebhookReciever:
+  WebhookRecieverLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub WebhookReciever-${AWS::Region}-${AWS::StackName}
+      FunctionName: !Sub WebhookRecieverLambda-${AWS::Region}-${AWS::StackName}
       Handler: index.handler
       Runtime: python3.9
       Code:
@@ -73,41 +81,69 @@ Resources:
             print(event)
             return {
               'statusCode': 200,
-              'body': event
+              'body': eventf
             }
-      Role: !GetAtt WebhookRecieverRole.Arn
+      Role: !GetAtt WebhookRecieverLambdaRole.Arn
 
-  WebhookRecieverRole:
+  WebhookRecieverLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub WebhookRecieverRole-${AWS::Region}-${AWS::StackName}
+      RoleName: !Sub WebhookRecieverLambdaRole-${AWS::Region}-${AWS::StackName}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-          Action:
-          - sts:AssumeRole
-      Policies:
-      - PolicyName: !Sub CloudWatch-${AWS::Region}-${AWS::StackName}
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
           - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
             Action:
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-            Resource: !GetAtt WebhookRecieverLogGroup.Arn
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub CloudWatch-${AWS::Region}-${AWS::StackName}
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 
+                  - !GetAtt WebhookRecieverLambdaLogGroup.Arn
 
-  WebhookRecieverLogGroup:
+  WebhookRecieverApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub WebhookRecieverApiRole-${AWS::Region}-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Policies:
+        - PolicyName: !Sub InvokeLambda-${AWS::Region}-${AWS::StackName}
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeAsync
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt 'WebhookRecieverLambda.Arn'
+
+  WebhookRecieverLambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       RetentionInDays: 30
-      LogGroupName: !Sub '/aws/lambda/WebhookReciever-${AWS::Region}-${AWS::StackName}/WebhookReciever'
+      LogGroupName: !Sub '/aws/lambda/WebhookRecieverLambda-${AWS::Region}-${AWS::StackName}'
 
 Outputs:
 
   GitPullWebHookApi:
-    Value: 'https://${WebHookApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayProdStage}/webhook'
+    Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayProdStage}/webhook'
