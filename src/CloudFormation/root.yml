@@ -1,17 +1,23 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploys infrastructure for CloudFormationContinuousDeployment tool
+
+Description: 'Deploys infrastructure for CloudFormationContinuousDeployment tool'
+
 Parameters:
+
   BranchesToTrack:
-    Description: Comma-separated list of branches to trach which trigger deployments. If left empty, all branches will be tracked
-    Type: String
+    Description: 'Comma-separated list of branches to trach which trigger deployments. If left empty, all branches will be tracked'
+    Type: 'String'
     Default: ''
+
   PathToRootTemplate:
-    Description: Path of the CloudFormation file in the repository to deploy. This should include the name of the file, as well as the extension (example src/CloudFormation/root.yml)
-    Type: String
+    Description: 'Path of the CloudFormation file in the repository to deploy. This should include the name of the file, as well as the extension (example src/CloudFormation/root.yml)'
+    Type: 'String'
     Default: ''
+
 Resources:
+
   ApiGatewayRestApi:
-    Type: AWS::ApiGateway::RestApi
+    Type: 'AWS::ApiGateway::RestApi'
     Properties:
       Body:
         info:
@@ -23,4 +29,85 @@ Resources:
           /webhook:
             post:
               consumes:
-                - application/json
+                - 'application/json'
+              produces:
+                - 'application/json'
+              x-amazon-apigateway-integration:
+                type: 'AWS_PROXY'
+                connectionType: 'INTERNET'
+                credentials: TODO
+                responses:
+                  default:
+                    statusCode: '200'
+                httpMethod: 'POST'
+                uri: !Join
+                  - ''
+                  - - !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/'
+                    - !GetAtt 'WebhookReciever.Arn'
+                    - '/invocations'
+                passthroughBehavior: when_no_templates
+
+  ApiGateWayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref 'ApiGatewayRestApi'
+      StageName: 'ApiStage'
+
+  ApiGatewayProdStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref 'ApiGateWayDeployment'
+      RestApiId: !Ref 'ApiGatewayRestApi'
+      StageName: Prod
+
+  WebhookReciever:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub WebhookReciever-${AWS::Region}-${AWS::StackName}
+      Handler: index.handler
+      Runtime: python3.9
+      Code:
+        ZipFile: >
+          import json
+          def lambda_handler(event, context):
+            print(event)
+            return {
+              'statusCode': 200,
+              'body': event
+            }
+      Role: !GetAtt WebhookRecieverRole.Arn
+
+  WebhookRecieverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub WebhookRecieverRole-${AWS::Region}-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub CloudWatch-${AWS::Region}-${AWS::StackName}
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: !GetAtt WebhookRecieverLogGroup.Arn
+
+  WebhookRecieverLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 30
+      LogGroupName: !Sub '/aws/lambda/WebhookReciever-${AWS::Region}-${AWS::StackName}/WebhookReciever'
+
+Outputs:
+
+  GitPullWebHookApi:
+    Value: 'https://${WebHookApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayProdStage}/webhook'
