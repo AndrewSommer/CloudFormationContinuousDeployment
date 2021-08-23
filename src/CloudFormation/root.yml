@@ -75,13 +75,12 @@ Resources:
       Handler: index.handler
       Runtime: python3.9
       Code:
-        ZipFile: >
+        ZipFile: |
           import json
-          def lambda_handler(event, context):
+          def handler(event, context):
             print(event)
             return {
-              'statusCode': 200,
-              'body': eventf
+              'statusCode': 200
             }
       Role: !GetAtt WebhookRecieverLambdaRole.Arn
 
