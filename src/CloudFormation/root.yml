@@ -1,18 +1,29 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: 'Deploys infrastructure for CloudFormationContinuousDeployment tool'
+Description: 'Deploys infrastructure for CloudFormationContinuousDeployment tool.'
 
 Parameters:
 
   BranchesToTrack:
-    Description: 'Comma-separated list of branches to trach which trigger deployments. If left empty, all branches will be tracked'
+    Description: 'Comma-separated list of branches to trach which trigger deployments. If left empty, all branches will be tracked.'
     Type: 'String'
     Default: ''
 
   PathToRootTemplate:
-    Description: 'Path of the CloudFormation file in the repository to deploy. This should include the name of the file, as well as the extension (example src/CloudFormation/root.yml)'
+    Description: 'Path of the CloudFormation file in the repository to deploy. This should include the name of the file, as well as the extension (example src/CloudFormation/root.yml).'
     Type: 'String'
     Default: ''
+
+  ActionMode:
+    Description: 'he action AWS CloudFormation performs on a stack or change set.'
+    Type: 'String'
+    DefaultValue: 'CREATE_UPDATE'
+    AllowedValues:
+      - 'CHANGE_SET_EXECUTE'
+      - 'CHANGE_SET_REPLACE'
+      - 'CREATE_UPDATE'
+      - 'DELETE_ONLY'
+      - 'REPLACE_ON_FAILURE'
 
 Resources:
 
@@ -56,24 +67,24 @@ Resources:
             title: 'Empty Schema'
 
   ApiGateWayDeployment:
-    Type: AWS::ApiGateway::Deployment
+    Type: 'AWS::ApiGateway::Deployment'
     Properties:
       RestApiId: !Ref 'ApiGatewayRestApi'
       StageName: 'ApiStage'
 
   ApiGatewayProdStage:
-    Type: AWS::ApiGateway::Stage
+    Type: 'AWS::ApiGateway::Stage'
     Properties:
       DeploymentId: !Ref 'ApiGateWayDeployment'
       RestApiId: !Ref 'ApiGatewayRestApi'
-      StageName: Prod
+      StageName: 'Prod'
 
   WebhookRecieverLambda:
-    Type: AWS::Lambda::Function
+    Type: 'AWS::Lambda::Function'
     Properties:
-      FunctionName: !Sub WebhookRecieverLambda-${AWS::Region}-${AWS::StackName}
-      Handler: index.handler
-      Runtime: python3.9
+      FunctionName: !Sub 'WebhookRecieverLambda-${AWS::Region}-${AWS::StackName}'
+      Handler: 'index.handler'
+      Runtime: 'python3.9'
       Code:
         ZipFile: |
           import json
@@ -82,67 +93,249 @@ Resources:
             return {
               'statusCode': 200
             }
-      Role: !GetAtt WebhookRecieverLambdaRole.Arn
+      Role: !GetAtt 'WebhookRecieverLambdaRole.Arn'
 
   WebhookRecieverLambdaRole:
-    Type: AWS::IAM::Role
+    Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub WebhookRecieverLambdaRole-${AWS::Region}-${AWS::StackName}
+      RoleName: !Sub 'WebhookRecieverLambdaRole-${AWS::Region}-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
+          - Effect: 'Allow'
             Principal:
               Service:
-                - lambda.amazonaws.com
+                - 'lambda.amazonaws.com'
             Action:
-              - sts:AssumeRole
+              - 'sts:AssumeRole'
       Policies:
-        - PolicyName: !Sub CloudWatch-${AWS::Region}-${AWS::StackName}
+        - PolicyName: !Sub 'CloudWatch-${AWS::Region}-${AWS::StackName}'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Effect: 'Allow'
                 Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
                 Resource: 
-                  - !GetAtt WebhookRecieverLambdaLogGroup.Arn
+                  - !GetAtt 'WebhookRecieverLambdaLogGroup.Arn'
 
   WebhookRecieverApiRole:
-    Type: AWS::IAM::Role
+    Type: 'AWS::IAM::Role'
     Properties:
-      RoleName: !Sub WebhookRecieverApiRole-${AWS::Region}-${AWS::StackName}
+      RoleName: !Sub 'WebhookRecieverApiRole-${AWS::Region}-${AWS::StackName}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
+          - Effect: 'Allow'
             Principal:
               Service: 
-                - apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      Path: /
+                - 'apigateway.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Path: '/'
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+        - 'arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
       Policies:
-        - PolicyName: !Sub InvokeLambda-${AWS::Region}-${AWS::StackName}
+        - PolicyName: !Sub 'InvokeLambda-${AWS::Region}-${AWS::StackName}'
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Effect: 'Allow'
                 Action:
-                  - lambda:InvokeAsync
-                  - lambda:InvokeFunction
+                  - 'lambda:InvokeAsync'
+                  - 'lambda:InvokeFunction'
                 Resource:
                   - !GetAtt 'WebhookRecieverLambda.Arn'
 
   WebhookRecieverLambdaLogGroup:
-    Type: AWS::Logs::LogGroup
+    Type: 'AWS::Logs::LogGroup'
     Properties:
-      RetentionInDays: 30
+      RetentionInDays: '30'
       LogGroupName: !Sub '/aws/lambda/WebhookRecieverLambda-${AWS::Region}-${AWS::StackName}'
+
+  CodePipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      RoleArn: !Ref CodePipelineRole
+      Stages:
+        Name: 'Source'
+        Actions:
+          - Name: 'SourceAction'
+            ActionTypeId:
+              Category: 'Source'
+              Owner: 'AWS'
+              Version: '1'
+              Provider: 'S3'
+            OutputArtifacts:
+              - Name: 'SourceOutput'
+            Configuration:
+              S3Bucket: !Ref 'ArtifactBucket'
+              S3Key: !Ref 'PathToRootTemplate'
+            RunOrder: '1'
+          - Name: 'Deploy'
+            ActionTypeId:
+              Category: 'Deploy'
+              Owner: 'AWS'
+              Provider: 'CloudFormation'
+              Version: '1'
+            RunOrder: '2'
+            Configuration:
+              ActionMode: !Ref 'ActionMode'
+              Capabilities: 'CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND'
+
+  CodePipelineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'CodePipelineRole-${AWS::Region}-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'codepipeline.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub 'CloudWatch-${AWS::Region}-${AWS::StackName}'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - '*'
+                Resource: 
+                  - '*'
+
+  ArtifactBucket:
+    Type: 'AWS::S3::Bucket'
+    AccessControl: 'Private'
+    BucketEncryption: 'SSE-S3'
+
+  CleanArtifactBucketOnUndeploymentLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'CleanArtifactBucketOnUndeploymentLambda-${AWS::Region}-${AWS::StackName}'
+      Handler: 'index.handler'
+      Runtime: 'python3.9'
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+            print(event)
+            return {
+              'statusCode': 200
+            }
+      Role: !GetAtt 'CleanArtifactBucketOnUndeploymentLambdaRole.Arn'
+
+  CleanArtifactBucketOnUndeploymentLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'CleanArtifactBucketOnUndeploymentLambdaRole-${AWS::Region}-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub 'CloudWatch-${AWS::Region}-${AWS::StackName}'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 
+                  - !GetAtt 'CleanArtifactBucketOnUndeploymentLambdaLogGroup.Arn'
+        - PolicyName: !Sub 'DeleteS3ArtifactObjects-${AWS::Region}-${AWS::StackName}'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:DeleteObject'
+                Resource: 
+                  - !Sub '${ArtifactBucket.Arn}/*'
+
+  CleanArtifactBucketOnUndeploymentLambdaLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: '30'
+      LogGroupName: !Sub '/aws/lambda/CleanArtifactBucketOnUndeploymentLambda-${AWS::Region}-${AWS::StackName}'
+
+  CleanArtifactBucketOnUndeploymentLambdaInvocation:
+    Type: 'AWS::CloudFormation::CustomResource'
+    Version: '1.0'
+    DependsOn: 
+      - 'CleanArtifactBucketOnUndeploymentLambdaLogGroup'
+      - 'ArtifactBucket'
+    Properties:
+      ServiceToken: !GetAtt 'CleanArtifactBucketOnUndeploymentLambda.Arn'
+
+  CloudformationRootTemplatePathSplitterFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub 'CloudformationRootTemplatePathSplitterFunction-${AWS::Region}-${AWS::StackName}'
+      Handler: 'index.handler'
+      Runtime: 'nodejs12.x'
+      Code:
+        ZipFile: >
+          var response = require('cfn-response');
+          exports.handler = function(event, context) {
+            console.log(event, context);
+            var responseData = {
+              TemplateName: process.env.TEMPLATE_PATH.split('/')[process.env.TEMPLATE_PATH.split('/').length -1].split('.')[0]
+            };
+            response.send(event, context, response.SUCCESS, responseData);
+          };
+      Environment:
+        Variables:
+          TEMPLATE_PATH: !Ref 'CloudformationRootTemplatePath'
+      Role: !GetAtt 'CloudformationRootTemplatePathSplitterFunctionRole.Arn'
+
+  CloudformationRootTemplatePathSplitterFunctionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'CloudformationRootTemplatePathSplitterFunctionRole-${AWS::Region}-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: !Sub 'CloudWatch-${AWS::Region}-${AWS::StackName}'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: 'Allow'
+            Action:
+            - 'logs:CreateLogStream'
+            - 'logs:PutLogEvents'
+            Resource: !GetAtt 'CloudformationRootTemplatePathSplitterLogGroup.Arn'
+
+  CloudformationRootTemplatePathSplitterLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: 1
+      LogGroupName: !Sub '/aws/lambda/CloudformationRootTemplatePathSplitterFunction-${AWS::Region}-${AWS::StackName}'
+
+  CloudformationRootTemplatePathSplitterInvocation:
+    Type: A'WS::CloudFormation::CustomResource'
+    Version: '1.0'
+    DependsOn: 'CloudformationRootTemplatePathSplitterLogGroup'
+    Properties:
+      ServiceToken: !GetAtt 'CloudformationRootTemplatePathSplitterFunction.Arn'
 
 Outputs:
 
-  GitPullWebHookApi:
+  GitPullWebHookApiEndpoint:
     Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayProdStage}/webhook'
