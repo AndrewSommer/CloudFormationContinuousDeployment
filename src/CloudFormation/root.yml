@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-
 Description: 'Deploys infrastructure for CloudFormationContinuousDeployment tool.'
-
+# -------------------------------------------------------------------------------------------------
+# Parameters
+# -------------------------------------------------------------------------------------------------
 Parameters:
 
   BranchesToTrack:
@@ -14,8 +15,19 @@ Parameters:
     Type: 'String'
     Default: ''
 
+  PathToParameterConfigurationFile:
+    Description: >
+      A template configuration file is a JSON-formatted text file that can specify template parameter values, a stack policy, and tags. 
+      Use these configuration files to specify parameter values or a stack policy for a stack.
+      If left empty, no configuration file will be used.
+      Reference https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/continuous-delivery-codepipeline-cfn-artifacts.html
+    Type: 'String'
+    Default: ''
+
   ActionMode:
-    Description: 'he action AWS CloudFormation performs on a stack or change set.'
+    Description: >
+      The action AWS CloudFormation performs on a stack or change set. 
+      Reference https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CloudFormation.html
     Type: 'String'
     DefaultValue: 'CREATE_UPDATE'
     AllowedValues:
@@ -25,6 +37,27 @@ Parameters:
       - 'DELETE_ONLY'
       - 'REPLACE_ON_FAILURE'
 
+  CodeBuildComputeType:
+    Description: >
+      The type of compute environment. This determines the number of CPU cores and memory the build environment uses.
+      Reference https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+    Type: 'String'
+    DefaultValue: 'BUILD_GENERAL1_SMALL'
+    AllowedValues:
+      - 'BUILD_GENERAL1_SMALL'
+      - 'BUILD_GENERAL1_MEDIUM'
+      - 'BUILD_GENERAL1_LARGE'
+
+# -------------------------------------------------------------------------------------------------
+# Conditions
+# -------------------------------------------------------------------------------------------------
+Conditions:
+
+  UseConfigurationFile: !Not [ !Equals [ !Ref PathToParameterConfigurationFile, '']]
+
+# -------------------------------------------------------------------------------------------------
+# Resources
+# -------------------------------------------------------------------------------------------------
 Resources:
 
   ApiGatewayRestApi:
@@ -182,6 +215,13 @@ Resources:
             Configuration:
               ActionMode: !Ref 'ActionMode'
               Capabilities: 'CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND'
+              ChangeSetName: 'pipeline-changeset'
+              #TODO FIX IAM ROLE
+              RoleArn: !Ref 'CodePipelineRole'
+              StackName: !Sub 'SourceOutput::${CloudformationRootTemplatePathSplitterInvocation.TemplateName}-${AWS::StackName}'
+              TemplatePath: !Sub 'SourceOutput::${PathToRootTemplate}'
+              TemplateConfiguration:
+                !If [ UseConfigurationFile, !Sub 'SourceOutput::${PathToParameterConfigurationFile}', !Ref 'AWS:NoValue']
 
   CodePipelineRole:
     Type: 'AWS::IAM::Role'
@@ -220,13 +260,17 @@ Resources:
       Runtime: 'python3.9'
       Code:
         ZipFile: |
-          import json
+          import boto3
+          import cfnresponse
           def handler(event, context):
-            print(event)
-            return {
-              'statusCode': 200
-            }
+            if event['RequestType'] == 'Delete':
+              boto3.resource('s3').Bucket(os.environ(BUCKET_NAME)).objects.all().delete()
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event['LogicalResourceId'])
+
       Role: !GetAtt 'CleanArtifactBucketOnUndeploymentLambdaRole.Arn'
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref 'ArtifactBucket'
 
   CleanArtifactBucketOnUndeploymentLambdaRole:
     Type: 'AWS::IAM::Role'
@@ -335,6 +379,54 @@ Resources:
     Properties:
       ServiceToken: !GetAtt 'CloudformationRootTemplatePathSplitterFunction.Arn'
 
+  GitPullCodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: NO_ARTIFACTS
+      BadgeEnabled: 'false'
+      Environment:
+        Image: aws/codebuild/standard:5.0
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref CodeBuildComputeType
+      QueuedTimeoutInMinutes: 60
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        BuildSpec: |
+            version: 0.2
+            env:
+              exported-variables:
+                - GIT_COMMIT_ID
+            phases:
+              install:
+                  runtime-versions:
+                      python: 3.7
+                  # commands:
+                  # - pip3 install boto3
+              build:
+                  commands:
+                  - echo "=======================Start-Deployment============================="
+                  - mkdir GitCode
+                  - echo "Cloning the repository $GitUrl"
+                  - git clone $GitUrl 
+                  - cd GitCode
+                  - echo "Checking out the commit $CommitId"
+                  - git checkout $CommitId
+                  - ls
+                  - cd ..
+                  - echo "Syncing files to S3"
+                  - aws s3 sync GitCode s3://$todo --sse
+                  - export GIT_COMMIT_ID=$(git rev-parse --short HEAD)
+                  - echo $GIT_COMMIT_ID
+                  - export GIT_COMMIT_MSG="$(git log -1 --pretty=%B)"
+                  - echo $GIT_COMMIT_MSG
+                  - echo "=======================End-Deployment============================="
+        Type: NO_SOURCE
+      TimeoutInMinutes: 20
+
+# -------------------------------------------------------------------------------------------------
+# Outputs
+# -------------------------------------------------------------------------------------------------
 Outputs:
 
   GitPullWebHookApiEndpoint:
